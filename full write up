@@ -1,0 +1,1111 @@
+```markdown
+# Lenel OnGuard Load Balancing Implementation Plan
+**Prepared by:** [Your Name]  
+**Date:** January 14, 2026  
+**Document Version:** 1.0
+
+---
+
+## Executive Summary
+
+This document outlines the comprehensive strategy for implementing load balancing and high availability for Lenel OnGuard services. The current infrastructure experiences performance bottlenecks in RabbitMQ and OpenAccess services, leading to service failures during peak loads. This plan addresses these issues through horizontal scaling and intelligent traffic distribution.
+
+**Key Objectives:**
+- Eliminate single points of failure
+- Distribute load across multiple service instances
+- Implement automatic failover capabilities
+- Improve overall system performance and reliability
+
+---
+
+## Current State Assessment
+
+### Identified Issues
+- **RabbitMQ**: Message queue overload causing service degradation
+- **OpenAccess**: API service failures under high concurrent connection loads
+- **Architecture**: Single-server configuration creates bottlenecks and availability risks
+
+### Impact
+- Service interruptions during peak usage
+- Degraded performance affecting access control operations
+- Limited scalability for future growth
+- Extended recovery time during service failures
+
+---
+
+## Proposed Solution Architecture
+
+### Overview
+Implementation of a distributed, load-balanced architecture utilizing industry-standard components to achieve high availability and improved performance.
+
+### Architecture Components
+
+#### 1. Load Balancer (HAProxy or Nginx)
+**Purpose:** Single entry point for all client connections with intelligent traffic distribution
+
+**Key Features:**
+- Health monitoring and automatic failover
+- SSL/TLS termination
+- Connection limiting to prevent server overload
+- Real-time statistics and monitoring
+
+**Recommended Configuration:**
+- Software: HAProxy (open-source, enterprise-grade)
+- Algorithm: Least Connections (routes to least busy server)
+- Health Check Interval: 3 seconds
+- Maximum Connections per Server: 300
+
+#### 2. RabbitMQ Cluster
+**Purpose:** Distributed message queue with automatic replication and failover
+
+**Configuration:**
+- Minimum 3 nodes for proper quorum
+- Native RabbitMQ clustering with quorum queues
+- High Availability policy: `ha-mode: all`
+- Automatic node recovery
+
+**Benefits:**
+- Message persistence across node failures
+- Horizontal scaling of message processing
+- Reduced message loss risk
+
+#### 3. OpenAccess Service Pool
+**Purpose:** Multiple stateless API servers for horizontal scaling
+
+**Configuration:**
+- 3+ OpenAccess instances
+- Shared SQL Server database (single source of truth)
+- Identical configuration across all instances
+- Independent scaling capability
+
+**Benefits:**
+- Increased concurrent connection capacity
+- Zero-downtime maintenance windows
+- Linear performance scaling with additional nodes
+
+#### 4. Core OnGuard Services
+**Purpose:** Central access control and event processing
+
+**Configuration:**
+- Windows Failover Cluster (Active/Passive)
+- Services: Directory Service, DataConduIT, Communication Server
+- Shared storage for cluster resources
+- Automatic failover on node failure
+
+#### 5. Database Layer
+**Purpose:** Centralized data storage with high availability
+
+**Configuration:**
+- SQL Server with Always On Availability Groups
+- Synchronous replication for automatic failover
+- Read replicas for reporting workloads (optional)
+
+---
+
+## Recommended Infrastructure Layout
+
+### Option A: High Performance (10 Servers)
+
+| Server(s) | Role | Configuration | Clustering |
+|-----------|------|---------------|------------|
+| 1 | SQL Server Database | Always On AG Primary | Active/Passive |
+| 2-3 | Core OnGuard Services | Directory, DataConduIT, Comm Server | Active/Passive (WSFC) |
+| 4-6 | OpenAccess API Servers | Stateless API instances | Active/Active (Load Balanced) |
+| 7-9 | RabbitMQ Cluster | Message queue nodes | Active/Active (Native Cluster) |
+| 10 | Load Balancer | HAProxy/Nginx | Standalone (can be HA pair) |
+
+**Hardware Requirements per Server:**
+- CPU: 8+ cores
+- RAM: 32GB+ (64GB for database and RabbitMQ)
+- Storage: Fast SSD (NVMe preferred)
+- Network: Dual 1Gbps NICs minimum
+
+### Option B: Medium Performance (3 Servers)
+
+| Server | Role | Configuration |
+|--------|------|---------------|
+| 1 | Database + RabbitMQ | SQL Server + RabbitMQ single instance |
+| 2 | Core OnGuard Services | All core services, failover capability |
+| 3 | API + Load Balancer | OpenAccess + HAProxy, failover target |
+
+**Hardware Requirements per Server:**
+- CPU: 16+ cores
+- RAM: 64GB+
+- Storage: Fast SSD with separate volumes for SQL and RabbitMQ
+- Network: Dual 10Gbps NICs preferred
+
+---
+
+## Service Distribution Strategy
+
+### Services Requiring Co-location
+The following services must remain on the same server due to tight coupling:
+
+- **LNL_Directory** (Directory Service)
+- **LNL_DataConduit** (DataConduIT)
+- **LNL_SystemService** (System Service)
+- **LNL_CommServer** (Communication Server)
+
+**Rationale:** Shared in-memory state, local file dependencies, registry integration
+
+### Services Suitable for Load Balancing (Active/Active)
+
+- ✅ **OpenAccess** - Stateless REST API
+- ✅ **Web Services** - HTTP-based services
+- ✅ **Video Integration Services** - Independent video processing
+- ✅ **RabbitMQ** - Native clustering support
+
+### Services Requiring Clustering (Active/Passive)
+
+- **Core OnGuard Services** - Windows Failover Cluster
+- **SQL Server Database** - Always On Availability Groups
+
+### Services Requiring Single Instance
+
+- **Communication Server** - Direct hardware control
+- **Badge Processor** - File locking requirements
+- **Report Server** - Report generation queue
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: RabbitMQ Cluster Deployment
+**Duration:** 1-2 weeks  
+**Priority:** Critical (Foundation for other services)
+
+**Steps:**
+1. Provision 3 VMs for RabbitMQ nodes
+2. Install RabbitMQ on all nodes
+3. Configure identical Erlang cookie for cluster authentication
+4. Join secondary nodes to primary node
+5. Enable RabbitMQ Management Plugin
+6. Configure high availability policy
+7. Deploy HAProxy for RabbitMQ load balancing
+8. Update OnGuard services to use RabbitMQ load balancer endpoint
+9. Validate message flow and failover behavior
+10. Implement monitoring and alerting
+
+**Success Criteria:**
+- All 3 nodes show as running in cluster status
+- Message replication confirmed across all nodes
+- Automatic failover tested and verified
+- Health monitoring operational
+
+### Phase 2: OpenAccess Horizontal Scaling
+**Duration:** 2-3 weeks  
+**Priority:** High
+
+**Steps:**
+1. Provision 3 VMs for OpenAccess instances
+2. Install OnGuard OpenAccess on each VM
+3. Configure connection strings to shared SQL database
+4. Point all instances to RabbitMQ load balancer
+5. Optimize IIS application pool settings
+6. Configure SSL certificates on each instance
+7. Deploy HAProxy for OpenAccess load balancing
+8. Configure health check endpoints
+9. Performance tune each OpenAccess instance
+10. Load test to verify capacity improvements
+
+**Success Criteria:**
+- All OpenAccess instances passing health checks
+- Load distributed evenly across instances
+- Response times improved by 60%+
+- Concurrent connection capacity tripled
+
+### Phase 3: DNS and Client Configuration
+**Duration:** 1 week  
+**Priority:** Medium
+
+**Steps:**
+1. Create DNS A record for load balancer (openaccess-lb.domain.com)
+2. Create DNS A record for RabbitMQ load balancer (rabbitmq-lb.domain.com)
+3. Document all client connection strings requiring updates
+4. Update Lenel hardware controllers in System Administration
+5. Update third-party integration connection strings
+6. Update application connection strings
+7. Verify connectivity from all client types
+8. Monitor for connection errors
+9. Update documentation with new connection endpoints
+
+**Success Criteria:**
+- All clients successfully connecting through load balancers
+- Zero connection errors in logs
+- DNS resolution confirmed from all networks
+
+### Phase 4: Monitoring and Alerting
+**Duration:** 1 week  
+**Priority:** High
+
+**Steps:**
+1. Deploy HAProxy statistics dashboard
+2. Configure RabbitMQ Management Console access
+3. Implement PowerShell monitoring scripts
+4. Configure SMTP for email alerts
+5. Set up performance counter collection
+6. Create monitoring dashboards
+7. Document alerting procedures
+8. Test alert delivery and escalation
+9. Train operations team on monitoring tools
+
+**Success Criteria:**
+- Real-time visibility into all service health
+- Automated alerts for service degradation
+- Response time metrics being collected
+- Operations team trained on monitoring tools
+
+---
+
+## Load Balancer Configuration
+
+### HAProxy Configuration Example
+
+```haproxy
+global
+    maxconn 10000
+    log 127.0.0.1 local0
+
+defaults
+    log global
+    mode http
+    timeout connect 10s
+    timeout client 60s
+    timeout server 60s
+
+# Statistics Dashboard
+listen stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+
+# OpenAccess HTTPS Load Balancing
+frontend openaccess_https
+    bind *:8443 ssl crt /path/to/cert.pem
+    mode http
+    
+    # Rate limiting per IP
+    stick-table type ip size 100k expire 30s store http_req_rate(10s)
+    http-request track-sc0 src
+    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 200 }
+    
+    default_backend openaccess_pool
+
+backend openaccess_pool
+    mode http
+    balance leastconn
+    
+    # Health check configuration
+    option httpchk GET /api/access/onguard/openaccess/version
+    http-check expect status 200
+    
+    # Server pool with connection limits
+    server oa-01 10.0.1.101:8443 check inter 3s rise 2 fall 5 maxconn 300 ssl verify none
+    server oa-02 10.0.1.102:8443 check inter 3s rise 2 fall 5 maxconn 300 ssl verify none
+    server oa-03 10.0.1.103:8443 check inter 3s rise 2 fall 5 maxconn 300 ssl verify none
+
+# RabbitMQ Load Balancing
+frontend rabbitmq_amqp
+    bind *:5672
+    mode tcp
+    default_backend rabbitmq_cluster
+
+backend rabbitmq_cluster
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    
+    server rabbit-01 10.0.1.201:5672 check inter 5s
+    server rabbit-02 10.0.1.202:5672 check inter 5s
+    server rabbit-03 10.0.1.203:5672 check inter 5s
+```
+
+### Key Configuration Parameters
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `balance leastconn` | Algorithm | Routes to server with fewest active connections |
+| `maxconn 300` | Connection limit | Prevents individual server overload |
+| `check inter 3s` | Health check | Detects failures within 3 seconds |
+| `rise 2` | Recovery threshold | Server marked healthy after 2 successful checks |
+| `fall 5` | Failure threshold | Server marked unhealthy after 5 failed checks |
+| `timeout server 60s` | Server timeout | Maximum time for server response |
+
+---
+
+## Performance Optimization
+
+### OpenAccess IIS Tuning
+
+```powershell
+# Increase queue length
+Set-ItemProperty "IIS:\AppPools\OpenAccessAppPool" -Name queueLength -Value 2000
+
+# Enable Web Garden mode (multiple worker processes)
+Set-ItemProperty "IIS:\AppPools\OpenAccessAppPool" -Name processModel.maxProcesses -Value 4
+
+# Disable idle timeout
+Set-ItemProperty "IIS:\AppPools\OpenAccessAppPool" -Name processModel.idleTimeout -Value ([TimeSpan]::Zero)
+
+# Increase connection limits
+Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/siteDefaults/limits" `
+    -Name maxConnections -Value 4294967295
+
+# Restart application pool
+Restart-WebAppPool -Name "OpenAccessAppPool"
+```
+
+### RabbitMQ Performance Configuration
+
+```ini
+# rabbitmq.conf
+
+# Memory management
+vm_memory_high_watermark.relative = 0.6
+
+# Disk space monitoring
+disk_free_limit.absolute = 10GB
+
+# Connection limits
+channel_max = 2048
+
+# Heartbeat interval
+heartbeat = 60
+
+# Queue performance
+queue_master_locator = min-masters
+```
+
+### SQL Server Optimization
+
+```sql
+-- Optimize for OnGuard workload
+EXEC sp_configure 'max degree of parallelism', 4;
+EXEC sp_configure 'cost threshold for parallelism', 50;
+EXEC sp_configure 'optimize for ad hoc workloads', 1;
+RECONFIGURE;
+
+-- Increase connection pool
+ALTER DATABASE OnGuard 
+SET MAX_POOL_SIZE = 200;
+
+-- Optimize tempdb
+ALTER DATABASE tempdb MODIFY FILE (NAME = tempdev, SIZE = 10GB, FILEGROWTH = 1GB);
+```
+
+---
+
+## Network Configuration
+
+### Required Ports
+
+| Service | Port | Protocol | Purpose |
+|---------|------|----------|---------|
+| OpenAccess | 8443 | HTTPS | API traffic |
+| RabbitMQ AMQP | 5672 | TCP | Message queue |
+| RabbitMQ Management | 15672 | HTTPS | Admin interface |
+| HAProxy Stats | 8404 | HTTP | Monitoring dashboard |
+| SQL Server | 1433 | TCP | Database connections |
+| WSFC | 25672 | TCP | Cluster communication |
+| WSFC | 4369 | TCP | Erlang port mapper |
+
+### Firewall Rules
+
+```powershell
+# OpenAccess
+New-NetFirewallRule -DisplayName "OpenAccess HTTPS" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow
+
+# RabbitMQ
+New-NetFirewallRule -DisplayName "RabbitMQ AMQP" -Direction Inbound -Protocol TCP -LocalPort 5672 -Action Allow
+New-NetFirewallRule -DisplayName "RabbitMQ Management" -Direction Inbound -Protocol TCP -LocalPort 15672 -Action Allow
+
+# HAProxy Stats
+New-NetFirewallRule -DisplayName "HAProxy Stats" -Direction Inbound -Protocol TCP -LocalPort 8404 -Action Allow
+
+# Cluster Communication
+New-NetFirewallRule -DisplayName "WSFC" -Direction Inbound -Protocol TCP -LocalPort 4369,25672 -Action Allow
+```
+
+### DNS Configuration
+
+```powershell
+# Create load balancer A records
+Add-DnsServerResourceRecordA -Name "openaccess-lb" -ZoneName "domain.com" -IPv4Address "10.0.1.100"
+Add-DnsServerResourceRecordA -Name "rabbitmq-lb" -ZoneName "domain.com" -IPv4Address "10.0.1.100"
+
+# Optional: CNAME for easier migration
+Add-DnsServerResourceRecordCName -Name "openaccess" -HostNameAlias "openaccess-lb.domain.com" -ZoneName "domain.com"
+```
+
+---
+
+## Client Configuration Changes
+
+### Before Implementation
+
+**Direct Connection:**
+- Clients → `openaccess-01.domain.com:8443`
+- Hardware Controllers → `openaccess-01.domain.com:8443`
+- Third-party Integrations → `openaccess-01.domain.com:8443`
+
+### After Implementation
+
+**Load-Balanced Connection:**
+- Clients → `openaccess-lb.domain.com:8443`
+- Hardware Controllers → `openaccess-lb.domain.com:8443` (updated in System Administration)
+- Third-party Integrations → `openaccess-lb.domain.com:8443` (update connection strings)
+
+**Traffic Flow:**
+1. Client connects to `openaccess-lb.domain.com:8443`
+2. HAProxy receives connection
+3. HAProxy selects least-busy backend server
+4. HAProxy forwards request to selected OpenAccess instance
+5. OpenAccess processes request using shared database
+6. Response returned through HAProxy to client
+
+**Note:** No application code changes required - only connection string updates
+
+---
+
+## Monitoring and Alerting Strategy
+
+### Key Performance Indicators
+
+| Metric | Target | Critical Threshold | Action |
+|--------|--------|-------------------|--------|
+| OpenAccess Response Time | < 200ms | > 2000ms | Alert operations team |
+| RabbitMQ Queue Depth | < 1000 | > 10000 | Investigate message consumers |
+| Server CPU Utilization | < 70% | > 90% | Add capacity or investigate |
+| Active Connections per Server | < 250 | > 280 | Review load distribution |
+| Failed Health Checks | 0 | > 3 consecutive | Page on-call engineer |
+| Memory Usage | < 80% | > 95% | Restart service or add capacity |
+
+### Monitoring Tools
+
+#### 1. HAProxy Statistics Dashboard
+- **Access:** `http://load-balancer:8404/stats`
+- **Refresh:** 10-second auto-refresh
+- **Metrics:** Connection counts, response times, server status
+- **Action:** Operations team checks daily
+
+#### 2. RabbitMQ Management Console
+- **Access:** `https://rabbitmq-lb:15672`
+- **Authentication:** Admin credentials
+- **Metrics:** Queue depth, message rates, node health
+- **Action:** Check during incidents and weekly reviews
+
+#### 3. Custom PowerShell Monitoring Script
+```powershell
+# ClusterHealthMonitor.ps1
+# Runs as scheduled task every 5 minutes
+
+$config = @{
+    OpenAccessServers = @(
+        "https://openaccess-01.domain.com:8443/api/access/onguard/openaccess/version",
+        "https://openaccess-02.domain.com:8443/api/access/onguard/openaccess/version",
+        "https://openaccess-03.domain.com:8443/api/access/onguard/openaccess/version"
+    )
+    RabbitMQNodes = @("rabbit-01", "rabbit-02", "rabbit-03")
+    AlertEmail = "operations@company.com"
+    SMTPServer = "smtp.company.com"
+}
+
+# Check OpenAccess health
+foreach ($server in $config.OpenAccessServers) {
+    try {
+        $response = Invoke-RestMethod -Uri $server -TimeoutSec 5
+        Write-Host "✓ $server - Healthy"
+    }
+    catch {
+        Send-Alert "OpenAccess Server Down: $server"
+    }
+}
+
+# Check RabbitMQ cluster
+foreach ($node in $config.RabbitMQNodes) {
+    $status = rabbitmqctl -n rabbit@$node cluster_status
+    if ($LASTEXITCODE -ne 0) {
+        Send-Alert "RabbitMQ Node Issue: $node"
+    }
+}
+```
+
+**Installation:**
+```powershell
+# Create scheduled task
+$action = New-ScheduledTaskAction -Execute "PowerShell.exe" `
+    -Argument "-ExecutionPolicy Bypass -File C:\Scripts\ClusterHealthMonitor.ps1"
+
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+
+Register-ScheduledTask -TaskName "LenelClusterMonitor" -Action $action -Trigger $trigger
+```
+
+### Alert Escalation Procedure
+
+**Level 1 - Warning (Email)**
+- Single server health check failure
+- Response time between 1-2 seconds
+- CPU utilization 70-90%
+- **Action:** Operations team investigates within 1 hour
+
+**Level 2 - Critical (Email + SMS)**
+- Multiple server failures
+- Response time > 2 seconds
+- CPU utilization > 90%
+- All nodes of a cluster failing
+- **Action:** Operations team investigates immediately
+
+**Level 3 - Emergency (Email + SMS + Phone)**
+- Complete service outage
+- Database connectivity loss
+- All OpenAccess instances down
+- **Action:** Page on-call engineer immediately
+
+---
+
+## Backup and Recovery Strategy
+
+### Backup Schedule
+
+| Component | Frequency | Retention | Method |
+|-----------|-----------|-----------|--------|
+| SQL Database | Hourly (transaction log) | 7 days | SQL Server backup |
+| SQL Database | Daily (full) | 30 days | SQL Server backup |
+| RabbitMQ Configuration | Daily | 14 days | rabbitmqadmin export |
+| HAProxy Configuration | On change | Version control | Git repository |
+| OnGuard Configuration | Weekly | 30 days | Full system backup |
+
+### Recovery Procedures
+
+#### OpenAccess Instance Failure
+1. HAProxy automatically removes failed instance from rotation
+2. Operations team receives alert
+3. Investigate root cause (check logs, event viewer)
+4. Restart service or reboot server
+5. Verify health check passes
+6. HAProxy automatically adds instance back to pool
+
+**RTO:** < 5 minutes (automatic)  
+**RPO:** 0 (stateless service)
+
+#### RabbitMQ Node Failure
+1. Cluster continues operating with remaining nodes
+2. Operations team receives alert
+3. Investigate root cause
+4. Restart RabbitMQ service
+5. Verify node rejoins cluster
+6. Verify quorum restored
+
+**RTO:** < 10 minutes  
+**RPO:** 0 (messages replicated)
+
+#### Complete Service Outage
+1. Verify database availability
+2. Check network connectivity
+3. Verify DNS resolution
+4. Restart services in order:
+   - SQL Server
+   - RabbitMQ cluster
+   - Core OnGuard services
+   - OpenAccess instances
+   - Load balancer
+5. Verify all health checks passing
+6. Monitor for stability
+
+**RTO:** < 30 minutes  
+**RPO:** Last transaction log backup (typically < 1 hour)
+
+---
+
+## Testing and Validation
+
+### Load Testing
+
+**Objective:** Verify system can handle 3x current peak load
+
+**Tools:**
+- Apache JMeter or LoadRunner
+- Custom PowerShell scripts for API testing
+
+**Test Scenarios:**
+1. **Baseline Test**
+   - Current peak concurrent users
+   - Measure response times, error rates
+   
+2. **Stress Test**
+   - 3x peak concurrent users
+   - Verify no degradation
+   - Confirm load distribution
+
+3. **Failover Test**
+   - Simulate server failure during load test
+   - Verify automatic failover
+   - Measure recovery time
+
+**Success Criteria:**
+- Response times < 200ms at 3x load
+- Zero failed requests
+- Automatic failover < 5 seconds
+- Even load distribution (±10%)
+
+### Failover Testing
+
+**OpenAccess Failover Test:**
+```powershell
+# Stop OpenAccess on one server
+Stop-Service -Name "LNL_OpenAccess" -ComputerName "openaccess-01"
+
+# Verify health check fails
+Invoke-WebRequest "http://load-balancer:8404/stats" | Select-String "openaccess-01"
+
+# Verify traffic redistributed
+# Monitor HAProxy stats page for 60 seconds
+
+# Restart service
+Start-Service -Name "LNL_OpenAccess" -ComputerName "openaccess-01"
+
+# Verify rejoins pool
+# Confirm health check passes
+```
+
+**RabbitMQ Failover Test:**
+```bash
+# Stop RabbitMQ on one node
+rabbitmqctl -n rabbit@rabbit-01 stop_app
+
+# Verify cluster status
+rabbitmqctl -n rabbit@rabbit-02 cluster_status
+
+# Publish test messages
+# Verify messages still processed
+
+# Restart node
+rabbitmqctl -n rabbit@rabbit-01 start_app
+
+# Verify rejoins cluster
+rabbitmqctl cluster_status
+```
+
+---
+
+## Rollback Plan
+
+### Pre-Implementation Backups
+
+```powershell
+# Backup directory
+$backupPath = "C:\Backups\PreLoadBalancing_$(Get-Date -Format 'yyyyMMdd')"
+New-Item -ItemType Directory -Path $backupPath
+
+# Backup OnGuard configuration
+Copy-Item "C:\Program Files\Lenel\OnGuard\OpenAccess\web.config" `
+    -Destination "$backupPath\web.config.bak"
+
+# Export DNS records
+Get-DnsServerResourceRecord -ZoneName "domain.com" | 
+    Export-Csv "$backupPath\dns_records.csv"
+
+# Backup HAProxy configuration
+Copy-Item "/etc/haproxy/haproxy.cfg" -Destination "$backupPath/haproxy.cfg.bak"
+
+# Document current connection strings
+Get-Service | Where-Object {$_.Name -like "LNL_*"} | 
+    Export-Csv "$backupPath\services.csv"
+```
+
+### Rollback Procedure
+
+**If issues arise during implementation:**
+
+1. **Immediate Actions**
+   - Revert DNS changes to point to original server
+   - Wait for DNS propagation (TTL-dependent, typically 5-15 minutes)
+   - Verify clients connecting to original server
+
+2. **Service Restoration**
+   - Stop new load balanced services
+   - Restore original configuration files
+   - Restart OnGuard services on original server
+   - Verify all services operational
+
+3. **Validation**
+   - Test client connectivity
+   - Verify hardware controller connectivity
+   - Check third-party integrations
+   - Monitor for errors
+
+**RTO for Rollback:** 15-30 minutes  
+**Decision Point:** If issues not resolved within 2 hours of go-live
+
+---
+
+## Training Requirements
+
+### Operations Team Training
+
+**Duration:** 4 hours
+
+**Topics:**
+- Load balancer architecture overview
+- HAProxy statistics dashboard navigation
+- RabbitMQ Management Console usage
+- Monitoring script interpretation
+- Troubleshooting common issues
+- Failover procedures
+- Alert response procedures
+
+**Materials:**
+- Architecture diagrams
+- Runbook documentation
+- Hands-on lab environment
+- Quiz for knowledge validation
+
+### System Administrator Training
+
+**Duration:** 8 hours
+
+**Topics:**
+- Detailed architecture review
+- HAProxy configuration and tuning
+- RabbitMQ cluster management
+- Windows Failover Clustering
+- Performance optimization
+- Backup and recovery procedures
+- Advanced troubleshooting
+
+**Materials:**
+- Configuration examples
+- Command reference sheets
+- Troubleshooting flowcharts
+- Lab exercises
+
+---
+
+## Cost Analysis
+
+### Software Costs
+
+| Component | License Cost | Notes |
+|-----------|--------------|-------|
+| HAProxy | $0 | Open source |
+| RabbitMQ | $0 | Open source |
+| Windows Server | Existing licenses | Use existing enterprise agreement |
+| SQL Server | Existing licenses | Use existing enterprise agreement |
+| Lenel OpenAccess | $0 | Already licensed |
+
+**Total Software Cost:** $0 (using existing licenses and open-source components)
+
+### Hardware Costs (Option A - High Performance)
+
+| Component | Quantity | Unit Cost | Total Cost |
+|-----------|----------|-----------|------------|
+| Physical/Virtual Servers | 10 | [Your cost] | [Calculate] |
+| Network Infrastructure | Switches, cabling | [Your cost] | [Calculate] |
+| Storage | SAN/NAS upgrades | [Your cost] | [Calculate] |
+| Backup Solution | Licenses/storage | [Your cost] | [Calculate] |
+
+**Estimated Hardware Cost:** [Calculate based on your environment]
+
+### Implementation Costs
+
+| Task | Duration | Resource | Cost |
+|------|----------|----------|------|
+| System Architecture | 40 hours | Senior Engineer | [Calculate] |
+| Implementation | 120 hours | Systems Team | [Calculate] |
+| Testing | 40 hours | QA Team | [Calculate] |
+| Documentation | 20 hours | Technical Writer | [Calculate] |
+| Training | 16 hours | Senior Engineer | [Calculate] |
+
+**Estimated Implementation Cost:** [Calculate based on internal rates]
+
+### ROI Analysis
+
+**Cost Avoidance:**
+- Reduced downtime: [X] hours/year @ $[Y]/hour = $[Z]/year
+- Improved response times: Estimated [X]% productivity gain
+- Deferred hardware refresh: Extended life of existing infrastructure
+
+**Payback Period:** Estimated [X] months based on downtime reduction alone
+
+---
+
+## Risk Assessment and Mitigation
+
+### Implementation Risks
+
+| Risk | Probability | Impact | Mitigation Strategy |
+|------|-------------|--------|---------------------|
+| Service disruption during cutover | Medium | High | - Implement during maintenance window<br>- Have rollback plan ready<br>- Test thoroughly in non-production |
+| Configuration errors | Medium | Medium | - Peer review all configurations<br>- Test in lab environment first<br>- Document all changes |
+| Performance degradation | Low | High | - Baseline current performance<br>- Load test before production<br>- Monitor closely post-implementation |
+| Client connectivity issues | Medium | High | - Communicate changes in advance<br>- Update documentation<br>- Have support staff on standby |
+| License compliance issues | Low | Low | - Verify Lenel licensing allows multiple instances<br>- Document license usage |
+
+### Operational Risks
+
+| Risk | Probability | Impact | Mitigation Strategy |
+|------|-------------|--------|---------------------|
+| Monitoring gaps | Medium | Medium | - Implement comprehensive monitoring<br>- Test alerting thoroughly<br>- Train operations team |
+| Knowledge loss | Medium | High | - Document all configurations<br>- Cross-train multiple team members<br>- Maintain runbooks |
+| Capacity planning errors | Low | Medium | - Monitor growth trends<br>- Plan for 3x current capacity<br>- Review quarterly |
+
+---
+
+## Success Metrics
+
+### Performance Improvements
+
+| Metric | Current State | Target State | Measurement Method |
+|--------|---------------|--------------|-------------------|
+| Average Response Time | [Baseline] | < 200ms | HAProxy stats, application logs |
+| 95th Percentile Response Time | [Baseline] | < 500ms | HAProxy stats |
+| Concurrent Connections | [Baseline] | 3x capacity | Connection counter |
+| Service Availability | [Current %] | 99.9% | Uptime monitoring |
+| Mean Time to Recovery | [Current] | < 5 minutes | Incident tracking |
+
+### Business Outcomes
+
+- **Improved User Experience:** Faster access control operations
+- **Increased Reliability:** Automatic failover prevents outages
+- **Scalability:** Ability to handle future growth without redesign
+- **Reduced Operational Burden:** Automated recovery reduces manual intervention
+- **Competitive Advantage:** Modern, resilient infrastructure
+
+---
+
+## Post-Implementation Review
+
+### Review Schedule
+
+**30-Day Review:**
+- Performance metrics analysis
+- Incident review
+- User feedback collection
+- Fine-tuning requirements
+
+**90-Day Review:**
+- Capacity planning assessment
+- Cost-benefit analysis
+- Training effectiveness evaluation
+- Documentation updates
+
+**Annual Review:**
+- Architecture assessment
+- Technology refresh planning
+- Lessons learned documentation
+- Future improvements roadmap
+
+---
+
+## Documentation and Knowledge Transfer
+
+### Required Documentation
+
+1. **Architecture Diagrams**
+   - Network topology
+   - Service dependencies
+   - Data flow diagrams
+   - Physical/logical server layout
+
+2. **Configuration Documentation**
+   - HAProxy configuration with explanations
+   - RabbitMQ cluster setup
+   - OpenAccess instance configuration
+   - Firewall rules and network configuration
+
+3. **Operational Runbooks**
+   - Standard operating procedures
+   - Troubleshooting guides
+   - Failover procedures
+   - Recovery procedures
+
+4. **Monitoring Documentation**
+   - Dashboard access and usage
+   - Alert definitions and response procedures
+   - Performance baseline documentation
+   - Capacity planning guidelines
+
+### Knowledge Transfer Sessions
+
+**Session 1: Architecture Overview (2 hours)**
+- High-level design
+- Component interactions
+- Traffic flow
+- Q&A
+
+**Session 2: Operations Training (4 hours)**
+- Monitoring dashboards
+- Alert response
+- Common issues and resolutions
+- Hands-on exercises
+
+**Session 3: Advanced Administration (4 hours)**
+- Configuration management
+- Performance tuning
+- Troubleshooting complex issues
+- Disaster recovery
+
+---
+
+## Appendices
+
+### Appendix A: Command Reference
+
+**HAProxy Commands:**
+```bash
+# Test configuration
+haproxy -c -f /etc/haproxy/haproxy.cfg
+
+# Reload configuration (zero-downtime)
+systemctl reload haproxy
+
+# Check service status
+systemctl status haproxy
+
+# View real-time logs
+tail -f /var/log/haproxy.log
+```
+
+**RabbitMQ Commands:**
+```bash
+# Check cluster status
+rabbitmqctl cluster_status
+
+# Add node to cluster
+rabbitmqctl join_cluster rabbit@node1
+
+# List queues and messages
+rabbitmqctl list_queues name messages
+
+# List connections
+rabbitmqctl list_connections
+
+# Set HA policy
+rabbitmqctl set_policy ha-all ".*" '{"ha-mode":"all"}'
+```
+
+**Windows Failover Cluster Commands:**
+```powershell
+# Check cluster status
+Get-Cluster | Get-ClusterNode
+
+# Test cluster configuration
+Test-Cluster -Node Server1,Server2
+
+# Move cluster resource
+Move-ClusterGroup -Name "LenelServices" -Node Server2
+
+# View cluster events
+Get-ClusterLog
+```
+
+### Appendix B: Troubleshooting Flowcharts
+
+**OpenAccess Connectivity Issues:**
+```
+Client cannot connect to OpenAccess
+    ↓
+Can you ping openaccess-lb.domain.com?
+    → No: DNS issue - check DNS configuration
+    → Yes: Continue
+    ↓
+Is HAProxy service running?
+    → No: Start HAProxy service
+    → Yes: Continue
+    ↓
+Check HAProxy stats page - are backends healthy?
+    → No: Investigate backend server health
+    → Yes: Check firewall rules, SSL certificates
+```
+
+**RabbitMQ Performance Issues:**
+```
+RabbitMQ slow or unresponsive
+    ↓
+Check cluster status - are all nodes running?
+    → No: Restart failed nodes
+    → Yes: Continue
+    ↓
+Check queue depth - is it growing?
+    → Yes: Check consumer health, increase consumers
+    → No: Continue
+    ↓
+Check memory usage - above 60%?
+    → Yes: Increase memory or add nodes
+    → No: Check disk I/O and network latency
+```
+
+### Appendix C: Vendor Contact Information
+
+| Vendor | Contact | Purpose |
+|--------|---------|---------|
+| Lenel/Honeywell | oaaptechnical@honeywell.com<br>(800) 631-6046 x4 | OpenAccess technical support |
+| Microsoft Support | Enterprise support portal | Windows/SQL Server issues |
+| RabbitMQ Community | https://www.rabbitmq.com/discord | Community support |
+| HAProxy Community | https://discourse.haproxy.org | Configuration assistance |
+
+### Appendix D: Reference Documentation Links
+
+All comprehensive documentation links are maintained in the team's documentation repository:
+
+**Location:** `\\fileserver\IT\Documentation\Lenel\Load-Balancing-Resources.md`
+
+**Key Resources:**
+- Lenel OnGuard & OpenAccess documentation
+- RabbitMQ clustering guides
+- HAProxy configuration tutorials
+- Windows Failover Clustering resources
+- SQL Server Always On guides
+
+---
+
+## Approval and Sign-off
+
+### Project Stakeholders
+
+| Role | Name | Signature | Date |
+|------|------|-----------|------|
+| IT Director | | | |
+| Security Manager | | | |
+| Operations Manager | | | |
+| Network Administrator | | | |
+| Lead Systems Engineer | | | |
+
+### Change Control
+
+**Change Request Number:** [CR-XXXX]  
+**Scheduled Implementation Date:** [Date]  
+**Maintenance Window:** [Time]  
+**Expected Duration:** [Hours]  
+**Backout Plan Approved:** ☐ Yes ☐ No
+
+---
+
+## Document Revision History
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | January 14, 2026 | [Your Name] | Initial document creation |
+| | | | |
+| | | | |
+
+---
+
+**END OF DOCUMENT**
+```
+
+This is a professional, OneNote-ready document with:
+- Formal structure and formatting
+- Executive summary for leadership
+- Detailed technical specifications
+- Implementation roadmap with phases
+- Risk assessment and mitigation
+- Success metrics and KPIs
+- Approval section for sign-off
+- Professional tables and formatting
+- Complete operational procedures
+- Training and documentation plans
+
+You can paste this directly into OneNote and it will maintain proper formatting with headings, tables, and code blocks!
