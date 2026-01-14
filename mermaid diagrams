@@ -1,0 +1,1458 @@
+```markdown
+# RabbitMQ Containerization Architecture Diagrams
+
+## Table of Contents
+1. [Single Instance Deployment](#single-instance-deployment)
+2. [Three-Node Cluster Architecture](#three-node-cluster-architecture)
+3. [VM vs Container Comparison](#vm-vs-container-comparison)
+4. [Podman Architecture](#podman-architecture)
+5. [Data Flow Diagrams](#data-flow-diagrams)
+6. [Network Architecture](#network-architecture)
+7. [Backup and Recovery Flow](#backup-and-recovery-flow)
+8. [Migration Process](#migration-process)
+9. [Monitoring Architecture](#monitoring-architecture)
+10. [High Availability Setup](#high-availability-setup)
+
+---
+
+## Single Instance Deployment
+
+### Basic Container Deployment
+
+```mermaid
+graph TB
+    subgraph Host["Linux Host Server"]
+        subgraph Podman["Podman Runtime"]
+            Container["RabbitMQ Container<br/>rabbitmq:3.12-management"]
+            
+            subgraph Volumes["Persistent Volumes"]
+                DataVol["rabbitmq-data<br/>/var/lib/rabbitmq"]
+                LogVol["rabbitmq-logs<br/>/var/log/rabbitmq"]
+                ConfigVol["rabbitmq-config<br/>/etc/rabbitmq"]
+            end
+        end
+        
+        Systemd["Systemd Service<br/>Auto-restart & Management"]
+    end
+    
+    Client["Client Applications"]
+    Admin["Administrator<br/>Management UI"]
+    
+    Client -->|AMQP 5672| Container
+    Admin -->|HTTPS 15672| Container
+    Container -->|Read/Write| DataVol
+    Container -->|Write| LogVol
+    Container -->|Read| ConfigVol
+    Systemd -->|Manages| Container
+    
+    style Container fill:#e1f5ff
+    style DataVol fill:#fff4e6
+    style LogVol fill:#fff4e6
+    style ConfigVol fill:#fff4e6
+    style Systemd fill:#f3e5f5
+```
+
+### Production Single Instance with Monitoring
+
+```mermaid
+graph TB
+    subgraph Host["Linux Host"]
+        subgraph PodmanRuntime["Podman Runtime"]
+            RMQ["RabbitMQ Container<br/>Port: 5672, 15672, 15692"]
+            Prometheus["Prometheus Container<br/>Port: 9090"]
+            Grafana["Grafana Container<br/>Port: 3000"]
+        end
+        
+        subgraph Storage["Persistent Storage"]
+            RMQData["RabbitMQ Data Volume"]
+            PrometheusData["Prometheus Data Volume"]
+            GrafanaData["Grafana Data Volume"]
+        end
+        
+        subgraph Network["Custom Network<br/>rabbitmq-monitoring"]
+            Bridge["Bridge Network<br/>10.88.0.0/16"]
+        end
+    end
+    
+    Clients["Application Clients"]
+    Admins["Administrators"]
+    
+    Clients -->|AMQP| RMQ
+    Admins -->|Management UI| RMQ
+    RMQ -->|Metrics Endpoint| Prometheus
+    Prometheus -->|Scrape Metrics| RMQ
+    Grafana -->|Query| Prometheus
+    Admins -->|Dashboard| Grafana
+    
+    RMQ -.->|Network| Bridge
+    Prometheus -.->|Network| Bridge
+    Grafana -.->|Network| Bridge
+    
+    RMQ -->|Data| RMQData
+    Prometheus -->|Data| PrometheusData
+    Grafana -->|Data| GrafanaData
+    
+    style RMQ fill:#e1f5ff
+    style Prometheus fill:#ffe5e5
+    style Grafana fill:#fff4e6
+    style Bridge fill:#e8f5e9
+```
+
+---
+
+## Three-Node Cluster Architecture
+
+### Physical Cluster Layout
+
+```mermaid
+graph TB
+    subgraph LB["Load Balancer (HAProxy)"]
+        HAProxy["HAProxy<br/>VIP: 10.0.1.100<br/>Port: 5672, 15672"]
+    end
+    
+    subgraph Node1["Host 1: rabbitmq-node1<br/>IP: 10.0.1.201"]
+        Container1["RabbitMQ Container<br/>rabbit@rabbitmq-node1"]
+        Volume1["Data Volume"]
+        Container1 -.-> Volume1
+    end
+    
+    subgraph Node2["Host 2: rabbitmq-node2<br/>IP: 10.0.1.202"]
+        Container2["RabbitMQ Container<br/>rabbit@rabbitmq-node2"]
+        Volume2["Data Volume"]
+        Container2 -.-> Volume2
+    end
+    
+    subgraph Node3["Host 3: rabbitmq-node3<br/>IP: 10.0.1.203"]
+        Container3["RabbitMQ Container<br/>rabbit@rabbitmq-node3"]
+        Volume3["Data Volume"]
+        Container3 -.-> Volume3
+    end
+    
+    Client["Client Applications"]
+    
+    Client -->|Connect| HAProxy
+    HAProxy -->|Load Balance| Container1
+    HAProxy -->|Load Balance| Container2
+    HAProxy -->|Load Balance| Container3
+    
+    Container1 <-->|Cluster Communication<br/>Port 25672| Container2
+    Container2 <-->|Cluster Communication<br/>Port 25672| Container3
+    Container3 <-->|Cluster Communication<br/>Port 25672| Container1
+    
+    Container1 <-.->|Erlang Distribution<br/>Port 4369| Container2
+    Container2 <-.->|Erlang Distribution<br/>Port 4369| Container3
+    Container3 <-.->|Erlang Distribution<br/>Port 4369| Container1
+    
+    style Container1 fill:#e1f5ff
+    style Container2 fill:#e1f5ff
+    style Container3 fill:#e1f5ff
+    style HAProxy fill:#f3e5f5
+    style Client fill:#fff4e6
+```
+
+### Cluster Communication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant LB as Load Balancer
+    participant N1 as Node 1 (Primary)
+    participant N2 as Node 2 (Replica)
+    participant N3 as Node 3 (Replica)
+    
+    Note over N1,N3: Cluster Formation
+    N1->>N2: Join Cluster Request
+    N2->>N1: Erlang Cookie Validation
+    N1->>N3: Join Cluster Request
+    N3->>N1: Erlang Cookie Validation
+    N1->>N2: Sync Metadata
+    N1->>N3: Sync Metadata
+    
+    Note over N1,N3: Message Publishing
+    C->>LB: Publish Message
+    LB->>N1: Route to Node 1
+    N1->>N1: Store Message
+    N1->>N2: Replicate (HA Policy)
+    N1->>N3: Replicate (HA Policy)
+    N1->>LB: Acknowledge
+    LB->>C: Confirm Published
+    
+    Note over N1,N3: Failover Scenario
+    N1--xN2: Node 1 Fails
+    N1--xN3: Node 1 Fails
+    N2->>N3: Election Process
+    N3->>N2: Quorum Check
+    N2->>N2: Promote to Primary
+    C->>LB: Request
+    LB->>N2: Route to New Primary
+    N2->>C: Response
+```
+
+### Cluster with Quorum Queues
+
+```mermaid
+graph TB
+    subgraph Cluster["RabbitMQ Cluster"]
+        subgraph Node1["Node 1 - Leader"]
+            Q1Leader["Queue: orders<br/>Role: Leader<br/>Messages: Replicated"]
+        end
+        
+        subgraph Node2["Node 2 - Follower"]
+            Q1Follower1["Queue: orders<br/>Role: Follower<br/>Messages: Replicated"]
+        end
+        
+        subgraph Node3["Node 3 - Follower"]
+            Q1Follower2["Queue: orders<br/>Role: Follower<br/>Messages: Replicated"]
+        end
+    end
+    
+    Publisher["Message Publisher"]
+    Consumer["Message Consumer"]
+    
+    Publisher -->|Publish| Q1Leader
+    Q1Leader -->|Sync Replicate| Q1Follower1
+    Q1Leader -->|Sync Replicate| Q1Follower2
+    Q1Leader -->|Deliver| Consumer
+    
+    Q1Leader -.->|Leader Election<br/>if Leader fails| Q1Follower1
+    Q1Leader -.->|Requires Quorum<br/>2 out of 3 nodes| Q1Follower2
+    
+    style Q1Leader fill:#4caf50
+    style Q1Follower1 fill:#81c784
+    style Q1Follower2 fill:#81c784
+```
+
+---
+
+## VM vs Container Comparison
+
+### Architecture Comparison
+
+```mermaid
+graph TB
+    subgraph Traditional["Traditional VM Architecture"]
+        subgraph Hypervisor["Hypervisor Layer"]
+            VM1["VM 1<br/>Full OS<br/>2-4 GB RAM"]
+            VM2["VM 2<br/>Full OS<br/>2-4 GB RAM"]
+            VM3["VM 3<br/>Full OS<br/>2-4 GB RAM"]
+        end
+        
+        subgraph VMApps["Applications"]
+            RMQ1["RabbitMQ<br/>2 GB"]
+            RMQ2["RabbitMQ<br/>2 GB"]
+            RMQ3["RabbitMQ<br/>2 GB"]
+        end
+        
+        Hardware1["Physical Hardware"]
+        
+        Hardware1 --> Hypervisor
+        VM1 --> RMQ1
+        VM2 --> RMQ2
+        VM3 --> RMQ3
+    end
+    
+    subgraph Container["Container Architecture"]
+        subgraph HostOS["Host Operating System"]
+            Podman["Podman Runtime<br/>~100 MB"]
+        end
+        
+        subgraph Containers["Containers"]
+            C1["RabbitMQ 1<br/>512 MB - 2 GB"]
+            C2["RabbitMQ 2<br/>512 MB - 2 GB"]
+            C3["RabbitMQ 3<br/>512 MB - 2 GB"]
+            C4["RabbitMQ 4<br/>512 MB - 2 GB"]
+            C5["RabbitMQ 5<br/>512 MB - 2 GB"]
+            C6["...more containers"]
+        end
+        
+        Hardware2["Physical Hardware"]
+        
+        Hardware2 --> HostOS
+        Podman --> C1
+        Podman --> C2
+        Podman --> C3
+        Podman --> C4
+        Podman --> C5
+        Podman --> C6
+    end
+    
+    style VM1 fill:#ffccbc
+    style VM2 fill:#ffccbc
+    style VM3 fill:#ffccbc
+    style C1 fill:#b3e5fc
+    style C2 fill:#b3e5fc
+    style C3 fill:#b3e5fc
+    style C4 fill:#b3e5fc
+    style C5 fill:#b3e5fc
+    style C6 fill:#b3e5fc
+```
+
+### Resource Utilization Comparison
+
+```mermaid
+graph LR
+    subgraph VM["Virtual Machine Deployment"]
+        VMTotal["Total Resources"]
+        VMTotal --> VMOS["OS Overhead<br/>40-50%<br/>2-4 GB RAM"]
+        VMTotal --> VMApp["Application<br/>50-60%<br/>2 GB RAM"]
+    end
+    
+    subgraph Container["Container Deployment"]
+        ContTotal["Total Resources"]
+        ContTotal --> ContRuntime["Runtime Overhead<br/>2-5%<br/>~100 MB RAM"]
+        ContTotal --> ContApp["Application<br/>95-98%<br/>2 GB RAM"]
+    end
+    
+    style VMOS fill:#ff6b6b
+    style VMApp fill:#4ecdc4
+    style ContRuntime fill:#ffe66d
+    style ContApp fill:#4ecdc4
+```
+
+---
+
+## Podman Architecture
+
+### Podman vs Docker Architecture
+
+```mermaid
+graph TB
+    subgraph Docker["Docker Architecture"]
+        DockerCLI["Docker CLI"]
+        DockerDaemon["Docker Daemon<br/>(Root Process)"]
+        DockerContainers["Containers"]
+        
+        DockerCLI -->|REST API| DockerDaemon
+        DockerDaemon -->|Manages| DockerContainers
+    end
+    
+    subgraph Podman["Podman Architecture (Daemonless)"]
+        PodmanCLI["Podman CLI"]
+        Conmon["Conmon<br/>(Monitor)"]
+        RunC["runC/crun<br/>(OCI Runtime)"]
+        PodmanContainers["Containers<br/>(Rootless)"]
+        Systemd["Systemd<br/>(Optional)"]
+        
+        PodmanCLI -->|Direct Fork/Exec| Conmon
+        Conmon -->|Spawns| RunC
+        RunC -->|Creates| PodmanContainers
+        Systemd -.->|Can Manage| PodmanContainers
+    end
+    
+    User["User (Non-root)"]
+    
+    User -->|Must use sudo| DockerCLI
+    User -->|Rootless by default| PodmanCLI
+    
+    style DockerDaemon fill:#ff6b6b
+    style PodmanCLI fill:#4ecdc4
+    style PodmanContainers fill:#95e1d3
+```
+
+### Podman Security Model
+
+```mermaid
+graph TB
+    subgraph RootedContainer["Rooted Container (Traditional)"]
+        RootUser["Root User on Host"]
+        RootDaemon["Daemon Process<br/>(Running as Root)"]
+        RootContainer["Container Process<br/>(UID 0 in container = UID 0 on host)"]
+        
+        RootUser --> RootDaemon
+        RootDaemon --> RootContainer
+    end
+    
+    subgraph RootlessContainer["Rootless Podman Container"]
+        RegularUser["Regular User<br/>(UID 1000)"]
+        PodmanProcess["Podman Process<br/>(UID 1000)"]
+        ContainerProcess["Container Process<br/>(UID 0 in container = UID 100000 on host)"]
+        UserNamespace["User Namespace<br/>UID Mapping"]
+        
+        RegularUser --> PodmanProcess
+        PodmanProcess --> UserNamespace
+        UserNamespace --> ContainerProcess
+    end
+    
+    Attacker["Potential Attacker"]
+    
+    Attacker -.->|Container Escape| RootContainer
+    RootContainer -.->|Gains Root Access| RootUser
+    
+    Attacker -.->|Container Escape| ContainerProcess
+    ContainerProcess -.->|Limited to User 1000| RegularUser
+    
+    style RootContainer fill:#ff6b6b
+    style ContainerProcess fill:#4ecdc4
+    style RootUser fill:#ff6b6b
+    style RegularUser fill:#4ecdc4
+```
+
+### Podman Pod Architecture
+
+```mermaid
+graph TB
+    subgraph Pod["Podman Pod (Kubernetes-style)"]
+        Infra["Infrastructure Container<br/>(pause container)"]
+        
+        subgraph SharedResources["Shared Resources"]
+            Network["Network Namespace"]
+            IPC["IPC Namespace"]
+            UTS["UTS Namespace"]
+        end
+        
+        subgraph Containers["Application Containers"]
+            RabbitMQ["RabbitMQ Container"]
+            Prometheus["Prometheus Exporter"]
+            Sidecar["Logging Sidecar"]
+        end
+        
+        Infra --> Network
+        Infra --> IPC
+        Infra --> UTS
+        
+        RabbitMQ -.->|Shares| Network
+        Prometheus -.->|Shares| Network
+        Sidecar -.->|Shares| Network
+        
+        RabbitMQ -.->|localhost| Prometheus
+        RabbitMQ -.->|localhost| Sidecar
+    end
+    
+    External["External Network"]
+    Storage["Persistent Storage"]
+    
+    External -->|Port Mapping| Infra
+    RabbitMQ -->|Volume Mount| Storage
+    
+    style Infra fill:#fff4e6
+    style RabbitMQ fill:#e1f5ff
+    style Prometheus fill:#ffe5e5
+    style Sidecar fill:#f3e5f5
+```
+
+---
+
+## Data Flow Diagrams
+
+### Message Publishing Flow
+
+```mermaid
+sequenceDiagram
+    participant P as Producer
+    participant LB as Load Balancer
+    participant N1 as Node 1
+    participant N2 as Node 2
+    participant N3 as Node 3
+    participant Vol as Volume Storage
+    
+    P->>LB: Publish Message
+    LB->>N1: Route (leastconn)
+    N1->>Vol: Write to Disk
+    Vol-->>N1: Confirm Write
+    
+    par Replication to Followers
+        N1->>N2: Replicate Message
+        N2->>Vol: Write to Disk
+        N2-->>N1: Ack
+    and
+        N1->>N3: Replicate Message
+        N3->>Vol: Write to Disk
+        N3-->>N1: Ack
+    end
+    
+    N1-->>LB: Confirm (Quorum Reached)
+    LB-->>P: Publish Confirmed
+```
+
+### Message Consumption Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant LB as Load Balancer
+    participant N1 as Node 1 (Leader)
+    participant N2 as Node 2 (Follower)
+    participant N3 as Node 3 (Follower)
+    participant Vol as Volume Storage
+    
+    C->>LB: Request Message
+    LB->>N1: Route to Leader
+    N1->>Vol: Read Message
+    Vol-->>N1: Return Message
+    N1-->>LB: Message
+    LB-->>C: Deliver Message
+    
+    C->>C: Process Message
+    C->>LB: Acknowledge
+    LB->>N1: Forward Ack
+    
+    N1->>Vol: Mark Consumed
+    
+    par Update Followers
+        N1->>N2: Sync State
+        N2->>Vol: Update
+    and
+        N1->>N3: Sync State
+        N3->>Vol: Update
+    end
+```
+
+### Container Startup Flow
+
+```mermaid
+flowchart TD
+    Start([Podman Run Command]) --> Pull{Image<br/>Cached?}
+    Pull -->|No| Download[Pull Image from Registry]
+    Pull -->|Yes| CreateContainer[Create Container]
+    Download --> CreateContainer
+    
+    CreateContainer --> MountVolumes[Mount Volumes]
+    MountVolumes --> SetupNetwork[Setup Network]
+    SetupNetwork --> ApplyCgroups[Apply Resource Limits<br/>cgroups]
+    ApplyCgroups --> SetupNamespaces[Setup Namespaces<br/>PID, Network, Mount, etc.]
+    
+    SetupNamespaces --> StartConmon[Start Conmon Monitor]
+    StartConmon --> LaunchRunC[Launch runC/crun]
+    LaunchRunC --> StartProcess[Start RabbitMQ Process]
+    
+    StartProcess --> HealthCheck{Health Check<br/>Passed?}
+    HealthCheck -->|Yes| Ready[Container Ready]
+    HealthCheck -->|No| Retry{Retry<br/>Count?}
+    Retry -->|< Max| Wait[Wait]
+    Wait --> HealthCheck
+    Retry -->|>= Max| Failed[Container Unhealthy]
+    
+    Ready --> RegisterSystemd[Register with Systemd<br/>if enabled]
+    
+    style Start fill:#e1f5ff
+    style Ready fill:#c8e6c9
+    style Failed fill:#ffcdd2
+```
+
+---
+
+## Network Architecture
+
+### Container Network Models
+
+```mermaid
+graph TB
+    subgraph HostNetwork["Host Network Mode"]
+        Host1["Host Network Stack"]
+        Container1["RabbitMQ Container<br/>Direct Host Network"]
+        
+        Host1 -.->|Shared| Container1
+        
+        External1["External Clients"] -->|Direct Access<br/>No NAT| Host1
+    end
+    
+    subgraph BridgeNetwork["Bridge Network Mode (Default)"]
+        Host2["Host Network Stack"]
+        Bridge["Podman Bridge<br/>10.88.0.0/16"]
+        Container2["RabbitMQ Container<br/>10.88.0.2"]
+        
+        Host2 -->|NAT| Bridge
+        Bridge -->|Virtual Interface| Container2
+        
+        External2["External Clients"] -->|Port Mapping<br/>5672→5672| Host2
+    end
+    
+    subgraph CustomNetwork["Custom Network"]
+        Host3["Host Network Stack"]
+        CustomBridge["Custom Bridge<br/>rabbitmq-cluster<br/>172.20.0.0/16"]
+        Container3A["RabbitMQ 1<br/>172.20.0.2"]
+        Container3B["RabbitMQ 2<br/>172.20.0.3"]
+        Container3C["RabbitMQ 3<br/>172.20.0.4"]
+        
+        Host3 -->|NAT| CustomBridge
+        CustomBridge --> Container3A
+        CustomBridge --> Container3B
+        CustomBridge --> Container3C
+        
+        Container3A <-->|Direct Communication| Container3B
+        Container3B <-->|Direct Communication| Container3C
+        Container3C <-->|Direct Communication| Container3A
+        
+        External3["External Clients"] -->|Port Mapping| Host3
+    end
+    
+    style Container1 fill:#b3e5fc
+    style Container2 fill:#c5e1a5
+    style Container3A fill:#ffe082
+    style Container3B fill:#ffe082
+    style Container3C fill:#ffe082
+```
+
+### Multi-Host Cluster Networking
+
+```mermaid
+graph TB
+    subgraph Internet["External Network"]
+        Client["Client Applications"]
+        LoadBalancer["Load Balancer<br/>10.0.1.100"]
+    end
+    
+    subgraph Host1["Physical Host 1<br/>10.0.1.201"]
+        PodmanNet1["Podman Bridge<br/>10.88.0.0/24"]
+        Container1["RabbitMQ Container<br/>10.88.0.2<br/>Mapped: 10.0.1.201:5672"]
+        
+        PodmanNet1 --> Container1
+    end
+    
+    subgraph Host2["Physical Host 2<br/>10.0.1.202"]
+        PodmanNet2["Podman Bridge<br/>10.88.0.0/24"]
+        Container2["RabbitMQ Container<br/>10.88.0.2<br/>Mapped: 10.0.1.202:5672"]
+        
+        PodmanNet2 --> Container2
+    end
+    
+    subgraph Host3["Physical Host 3<br/>10.0.1.203"]
+        PodmanNet3["Podman Bridge<br/>10.88.0.0/24"]
+        Container3["RabbitMQ Container<br/>10.88.0.2<br/>Mapped: 10.0.1.203:5672"]
+        
+        PodmanNet3 --> Container3
+    end
+    
+    Client -->|AMQP| LoadBalancer
+    LoadBalancer -.->|Route| Container1
+    LoadBalancer -.->|Route| Container2
+    LoadBalancer -.->|Route| Container3
+    
+    Container1 <-->|Cluster: 10.0.1.202:25672| Container2
+    Container2 <-->|Cluster: 10.0.1.203:25672| Container3
+    Container3 <-->|Cluster: 10.0.1.201:25672| Container1
+    
+    style LoadBalancer fill:#f3e5f5
+    style Container1 fill:#e1f5ff
+    style Container2 fill:#e1f5ff
+    style Container3 fill:#e1f5ff
+```
+
+### DNS Resolution in Containers
+
+```mermaid
+flowchart TD
+    Container["RabbitMQ Container"] --> DNSResolve{DNS Resolution<br/>Request}
+    
+    DNSResolve -->|Container Name| PodmanDNS["Podman Internal DNS<br/>dnsname plugin"]
+    DNSResolve -->|External Domain| HostResolv["Host /etc/resolv.conf"]
+    
+    PodmanDNS --> ContainerIP["Resolve to<br/>Container IP<br/>10.88.0.x"]
+    HostResolv --> ExternalDNS["External DNS Server"]
+    ExternalDNS --> ExternalIP["Resolve to<br/>External IP"]
+    
+    ContainerIP --> Response["DNS Response"]
+    ExternalIP --> Response
+    
+    Response --> Container
+    
+    style Container fill:#e1f5ff
+    style PodmanDNS fill:#fff4e6
+    style HostResolv fill:#f3e5f5
+```
+
+---
+
+## Backup and Recovery Flow
+
+### Backup Strategy
+
+```mermaid
+flowchart TD
+    Start([Scheduled Backup<br/>Daily 2 AM]) --> StopContainer{Production<br/>Instance?}
+    
+    StopContainer -->|Yes - Stop Gracefully| StopCmd[podman stop -t 30]
+    StopContainer -->|No - Keep Running| SkipStop[Continue]
+    
+    StopCmd --> ExportVolume[Export Volume Data<br/>podman volume export]
+    SkipStop --> ExportVolume
+    
+    ExportVolume --> ExportConfig[Export Definitions<br/>rabbitmqadmin export]
+    ExportConfig --> ExportContainer[Export Container Config<br/>podman inspect]
+    
+    ExportContainer --> Compress[Compress Backup<br/>tar -czf]
+    Compress --> Upload[Upload to Backup Storage<br/>S3/NFS/Local]
+    
+    Upload --> Cleanup[Remove Old Backups<br/>> 7 days]
+    Cleanup --> RestartContainer{Was Container<br/>Stopped?}
+    
+    RestartContainer -->|Yes| StartCmd[podman start]
+    RestartContainer -->|No| Complete([Backup Complete])
+    
+    StartCmd --> Verify[Verify Container Health]
+    Verify --> Complete
+    
+    Complete --> Notify[Send Notification<br/>Email/Slack]
+    
+    style Start fill:#e1f5ff
+    style Complete fill:#c8e6c9
+    style Notify fill:#fff4e6
+```
+
+### Recovery Process
+
+```mermaid
+flowchart TD
+    Incident([Service Failure<br/>Detected]) --> Assessment{Failure<br/>Type?}
+    
+    Assessment -->|Container Crash| RestartContainer[Restart Container<br/>podman restart]
+    Assessment -->|Data Corruption| DataRecover[Data Recovery Needed]
+    Assessment -->|Complete Loss| FullRecover[Full Recovery Needed]
+    
+    RestartContainer --> VerifyRestart{Container<br/>Healthy?}
+    VerifyRestart -->|Yes| Success([Recovery Complete])
+    VerifyRestart -->|No| DataRecover
+    
+    DataRecover --> StopCurrent[Stop Current Container<br/>podman stop]
+    StopCurrent --> RemoveVolume[Remove Corrupted Volume<br/>podman volume rm]
+    RemoveVolume --> CreateVolume[Create New Volume<br/>podman volume create]
+    CreateVolume --> SelectBackup[Select Backup Point<br/>List available backups]
+    
+    SelectBackup --> RestoreVolume[Restore Volume Data<br/>podman volume import]
+    RestoreVolume --> RestoreDefinitions[Import Definitions<br/>rabbitmqadmin import]
+    RestoreDefinitions --> StartNew[Start Container<br/>with Restored Data]
+    
+    FullRecover --> PullImage[Pull Image<br/>podman pull]
+    PullImage --> CreateVolume
+    
+    StartNew --> VerifyData{Data<br/>Integrity?}
+    VerifyData -->|Pass| VerifyCluster{Cluster<br/>Configured?}
+    VerifyData -->|Fail| SelectBackup
+    
+    VerifyCluster -->|Yes| RejoinCluster[Rejoin Cluster<br/>rabbitmqctl join_cluster]
+    VerifyCluster -->|No| Success
+    
+    RejoinCluster --> VerifySync{Cluster<br/>Synchronized?}
+    VerifySync -->|Yes| Success
+    VerifySync -->|No| TroubleshootCluster[Troubleshoot<br/>Cluster Issues]
+    
+    TroubleshootCluster --> Manual([Manual Intervention<br/>Required])
+    
+    Success --> NotifyOps[Notify Operations<br/>Recovery Complete]
+    
+    style Incident fill:#ffcdd2
+    style Success fill:#c8e6c9
+    style Manual fill:#fff9c4
+```
+
+### Automated Backup Architecture
+
+```mermaid
+graph TB
+    subgraph Scheduler["Backup Scheduler"]
+        Cron["Cron/Systemd Timer"]
+        BackupScript["Backup Script<br/>rabbitmq-backup.sh"]
+    end
+    
+    subgraph Containers["RabbitMQ Containers"]
+        Container1["Node 1"]
+        Container2["Node 2"]
+        Container3["Node 3"]
+    end
+    
+    subgraph Backup["Backup Process"]
+        VolumeExport["Volume Export"]
+        ConfigExport["Config Export"]
+        DefinitionsExport["Definitions Export"]
+        Compression["Compression"]
+    end
+    
+    subgraph Storage["Backup Storage"]
+        Local["Local Filesystem<br/>/opt/backups"]
+        NFS["NFS Share<br/>\\server\backups"]
+        S3["S3 Bucket<br/>s3://backups"]
+    end
+    
+    subgraph Retention["Retention Policy"]
+        Daily["Daily: 7 days"]
+        Weekly["Weekly: 4 weeks"]
+        Monthly["Monthly: 12 months"]
+    end
+    
+    Cron -->|Triggers| BackupScript
+    BackupScript --> Container1
+    BackupScript --> Container2
+    BackupScript --> Container3
+    
+    Container1 --> VolumeExport
+    Container1 --> ConfigExport
+    Container1 --> DefinitionsExport
+    
+    VolumeExport --> Compression
+    ConfigExport --> Compression
+    DefinitionsExport --> Compression
+    
+    Compression --> Local
+    Local --> NFS
+    NFS --> S3
+    
+    Local --> Daily
+    NFS --> Weekly
+    S3 --> Monthly
+    
+    style BackupScript fill:#e1f5ff
+    style Compression fill:#fff4e6
+    style S3 fill:#c8e6c9
+```
+
+---
+
+## Migration Process
+
+### VM to Container Migration Flow
+
+```mermaid
+flowchart TD
+    Start([Start Migration]) --> Planning[Planning Phase]
+    
+    Planning --> Assessment[Assess Current VM<br/>- Resources<br/>- Configuration<br/>- Dependencies]
+    Assessment --> TestEnv[Setup Test Environment<br/>- Install Podman<br/>- Test deployment]
+    
+    TestEnv --> Validation{Test<br/>Successful?}
+    Validation -->|No| Troubleshoot[Troubleshoot Issues]
+    Troubleshoot --> TestEnv
+    Validation -->|Yes| Schedule[Schedule Maintenance Window]
+    
+    Schedule --> Notify[Notify Stakeholders<br/>- Users<br/>- Team<br/>- Management]
+    
+    Notify --> BackupVM[Full VM Backup<br/>- Data<br/>- Configuration<br/>- Definitions]
+    
+    BackupVM --> ExportData[Export Production Data<br/>- rabbitmqadmin export<br/>- Backup volumes]
+    
+    ExportData --> StopVM[Stop VM RabbitMQ<br/>systemctl stop]
+    
+    StopVM --> DeployContainer[Deploy Container<br/>- Pull image<br/>- Create volumes<br/>- Start container]
+    
+    DeployContainer --> ImportData[Import Data<br/>- Restore volumes<br/>- Import definitions<br/>- Configure users]
+    
+    ImportData --> UpdateDNS[Update DNS/Clients<br/>- DNS records<br/>- Connection strings<br/>- Documentation]
+    
+    UpdateDNS --> TestProduction[Test Production<br/>- Connectivity<br/>- Performance<br/>- Features]
+    
+    TestProduction --> Validation2{Production<br/>Working?}
+    
+    Validation2 -->|No| Rollback[Rollback<br/>- Restart VM<br/>- Revert DNS<br/>- Notify]
+    Rollback --> PostMortem[Post-Mortem Analysis]
+    
+    Validation2 -->|Yes| MonitoringPeriod[Monitoring Period<br/>- 7 days<br/>- Close monitoring<br/>- Performance tracking]
+    
+    MonitoringPeriod --> Validation3{Stable for<br/>7 days?}
+    Validation3 -->|No| Investigation[Investigate Issues]
+    Investigation --> MonitoringPeriod
+    
+    Validation3 -->|Yes| DecommissionVM[Decommission VM<br/>- Final backup<br/>- Archive data<br/>- Document completion]
+    
+    DecommissionVM --> Complete([Migration Complete])
+    
+    style Start fill:#e1f5ff
+    style Complete fill:#c8e6c9
+    style Rollback fill:#ffcdd2
+    style MonitoringPeriod fill:#fff4e6
+```
+
+### Parallel Migration Strategy
+
+```mermaid
+graph LR
+    subgraph Phase1["Phase 1: Preparation"]
+        VM1["Production VM<br/>Running"]
+        Test["Test Container<br/>Parallel Testing"]
+        
+        VM1 -.->|Mirror Config| Test
+    end
+    
+    subgraph Phase2["Phase 2: Soft Launch"]
+        VM2["Production VM<br/>Primary"]
+        Container1["Production Container<br/>Secondary"]
+        
+        VM2 -->|Replicate Data| Container1
+        Container1 -.->|Limited Traffic<br/>10%| Client1["Test Clients"]
+    end
+    
+    subgraph Phase3["Phase 3: Load Balancing"]
+        VM3["Production VM<br/>50% Traffic"]
+        Container2["Production Container<br/>50% Traffic"]
+        LB1["Load Balancer"]
+        
+        LB1 -->|50%| VM3
+        LB1 -->|50%| Container2
+    end
+    
+    subgraph Phase4["Phase 4: Container Primary"]
+        VM4["Production VM<br/>10% Traffic<br/>Backup"]
+        Container3["Production Container<br/>90% Traffic<br/>Primary"]
+        LB2["Load Balancer"]
+        
+        LB2 -->|10%| VM4
+        LB2 -->|90%| Container3
+    end
+    
+    subgraph Phase5["Phase 5: Complete"]
+        Container4["Production Container<br/>100% Traffic"]
+        VMArchive["VM Archived"]
+    end
+    
+    Phase1 --> Phase2
+    Phase2 --> Phase3
+    Phase3 --> Phase4
+    Phase4 --> Phase5
+    
+    style VM1 fill:#ffcdd2
+    style Container4 fill:#c8e6c9
+    style LB1 fill:#fff4e6
+    style LB2 fill:#fff4e6
+```
+
+---
+
+## Monitoring Architecture
+
+### Comprehensive Monitoring Stack
+
+```mermaid
+graph TB
+    subgraph Containers["Container Infrastructure"]
+        RMQ1["RabbitMQ Node 1<br/>:5672, :15672, :15692"]
+        RMQ2["RabbitMQ Node 2<br/>:5672, :15672, :15692"]
+        RMQ3["RabbitMQ Node 3<br/>:5672, :15672, :15692"]
+        
+        cAdvisor["cAdvisor<br/>Container Metrics<br/>:8080"]
+        NodeExporter["Node Exporter<br/>Host Metrics<br/>:9100"]
+    end
+    
+    subgraph Monitoring["Monitoring Stack"]
+        Prometheus["Prometheus<br/>Metrics Storage<br/>:9090"]
+        Grafana["Grafana<br/>Visualization<br/>:3000"]
+        AlertManager["AlertManager<br/>Alert Routing<br/>:9093"]
+    end
+    
+    subgraph Logging["Logging Stack"]
+        Loki["Loki<br/>Log Aggregation<br/>:3100"]
+        Promtail["Promtail<br/>Log Shipper"]
+    end
+    
+    subgraph Notification["Notifications"]
+        Email["Email<br/>SMTP"]
+        Slack["Slack<br/>Webhook"]
+        PagerDuty["PagerDuty<br/>Incidents"]
+    end
+    
+    RMQ1 -->|Prometheus Metrics| Prometheus
+    RMQ2 -->|Prometheus Metrics| Prometheus
+    RMQ3 -->|Prometheus Metrics| Prometheus
+    
+    cAdvisor -->|Container Stats| Prometheus
+    NodeExporter -->|Host Stats| Prometheus
+    
+    Prometheus -->|Query| Grafana
+    Prometheus -->|Alerts| AlertManager
+    
+    RMQ1 -->|Logs| Promtail
+    RMQ2 -->|Logs| Promtail
+    RMQ3 -->|Logs| Promtail
+    Promtail -->|Ship Logs| Loki
+    
+    Loki -->|Query| Grafana
+    
+    AlertManager -->|Send| Email
+    AlertManager -->|Send| Slack
+    AlertManager -->|Send| PagerDuty
+    
+    Admin["Administrator"] -->|View| Grafana
+    
+    style RMQ1 fill:#e1f5ff
+    style RMQ2 fill:#e1f5ff
+    style RMQ3 fill:#e1f5ff
+    style Prometheus fill:#ffe5e5
+    style Grafana fill:#fff4e6
+    style AlertManager fill:#f3e5f5
+```
+
+### Metrics Collection Flow
+
+```mermaid
+sequenceDiagram
+    participant RMQ as RabbitMQ Container
+    participant Prom as Prometheus
+    participant Graf as Grafana
+    participant Alert as AlertManager
+    participant Admin as Administrator
+    
+    Note over RMQ,Prom: Metrics Scraping (every 15s)
+    loop Every 15 seconds
+        Prom->>RMQ: Scrape /metrics endpoint
+        RMQ-->>Prom: Return metrics<br/>- Queue depth<br/>- Memory usage<br/>- Connection count
+        Prom->>Prom: Store in TSDB
+    end
+    
+    Note over Prom,Alert: Alert Evaluation (every 30s)
+    Prom->>Prom: Evaluate Alert Rules
+    Prom->>Alert: Trigger Alert<br/>(Queue depth > 10000)
+    Alert->>Alert: Group & Route Alerts
+    Alert->>Admin: Send Notification<br/>Email/Slack/PagerDuty
+    
+    Note over Admin,Graf: Dashboard Query
+    Admin->>Graf: View Dashboard
+    Graf->>Prom: PromQL Query<br/>rate(messages_published[5m])
+    Prom-->>Graf: Return Time Series Data
+    Graf-->>Admin: Render Graph
+    
+    Note over Admin,RMQ: Direct Investigation
+    Admin->>RMQ: SSH / Podman Exec
+    RMQ-->>Admin: rabbitmqctl status
+```
+
+### Alert Hierarchy
+
+```mermaid
+graph TB
+    subgraph Metrics["Metric Sources"]
+        Queue["Queue Depth<br/>Messages waiting"]
+        Memory["Memory Usage<br/>% of limit"]
+        CPU["CPU Usage<br/>% utilization"]
+        Disk["Disk Space<br/>Free space"]
+        Connections["Connection Count<br/>Active connections"]
+        ClusterStatus["Cluster Status<br/>Node health"]
+    end
+    
+    subgraph Alerts["Alert Levels"]
+        Warning["Warning Level<br/>- Queue > 5000<br/>- Memory > 70%<br/>- Disk < 20%"]
+        
+        Critical["Critical Level<br/>- Queue > 10000<br/>- Memory > 90%<br/>- Disk < 10%<br/>- Node Down"]
+        
+        Emergency["Emergency Level<br/>- All Nodes Down<br/>- Data Loss Risk<br/>- Cluster Split"]
+    end
+    
+    subgraph Response["Response Actions"]
+        Email["Email Alert<br/>ops@company.com"]
+        Slack["Slack Notification<br/>#alerts channel"]
+        Page["PagerDuty Page<br/>On-call engineer"]
+        Escalate["Management<br/>Escalation"]
+    end
+    
+    Queue --> Warning
+    Memory --> Warning
+    Disk --> Warning
+    
+    Queue --> Critical
+    Memory --> Critical
+    Disk --> Critical
+    Connections --> Critical
+    ClusterStatus --> Critical
+    
+    ClusterStatus --> Emergency
+    
+    Warning --> Email
+    Critical --> Email
+    Critical --> Slack
+    Emergency --> Email
+    Emergency --> Slack
+    Emergency --> Page
+    Emergency --> Escalate
+    
+    style Warning fill:#fff9c4
+    style Critical fill:#ffccbc
+    style Emergency fill:#ffcdd2
+```
+
+---
+
+## High Availability Setup
+
+### Multi-Datacenter Deployment
+
+```mermaid
+graph TB
+    subgraph DC1["Datacenter 1 (Primary)"]
+        subgraph Cluster1["RabbitMQ Cluster 1"]
+            DC1N1["Node 1<br/>10.1.1.201"]
+            DC1N2["Node 2<br/>10.1.1.202"]
+        end
+        DC1LB["Load Balancer 1<br/>10.1.1.100"]
+    end
+    
+    subgraph DC2["Datacenter 2 (Secondary)"]
+        subgraph Cluster2["RabbitMQ Cluster 2"]
+            DC2N1["Node 1<br/>10.2.1.201"]
+            DC2N2["Node 2<br/>10.2.1.202"]
+        end
+        DC2LB["Load Balancer 2<br/>10.2.1.100"]
+    end
+    
+    subgraph DC3["Datacenter 3 (DR)"]
+        subgraph Cluster3["RabbitMQ Cluster 3"]
+            DC3N1["Node 1<br/>10.3.1.201"]
+        end
+        DC3LB["Load Balancer 3<br/>10.3.1.100"]
+    end
+    
+    GlobalLB["Global Load Balancer<br/>DNS/GeoDNS"]
+    Client["Client Applications"]
+    
+    Client --> GlobalLB
+    GlobalLB -.->|Primary| DC1LB
+    GlobalLB -.->|Failover| DC2LB
+    GlobalLB -.->|DR| DC3LB
+    
+    DC1LB --> DC1N1
+    DC1LB --> DC1N2
+    
+    DC2LB --> DC2N1
+    DC2LB --> DC2N2
+    
+    DC3LB --> DC3N1
+    
+    DC1N1 <-.->|Federation| DC2N1
+    DC1N1 <-.->|Federation| DC3N1
+    DC2N1 <-.->|Federation| DC3N1
+    
+    DC1N1 <-->|Cluster| DC1N2
+    DC2N1 <-->|Cluster| DC2N2
+    
+    style DC1N1 fill:#c8e6c9
+    style DC1N2 fill:#c8e6c9
+    style DC2N1 fill:#fff9c4
+    style DC2N2 fill:#fff9c4
+    style DC3N1 fill:#ffccbc
+    style GlobalLB fill:#e1f5ff
+```
+
+### Failover Scenarios
+
+```mermaid
+stateDiagram-v2
+    [*] --> HealthyCluster: All Nodes Running
+    
+    HealthyCluster --> SingleNodeDown: Node Failure
+    SingleNodeDown --> HealthyCluster: Node Recovery
+    SingleNodeDown --> TwoNodesDown: Additional Failure
+    
+    TwoNodesDown --> SingleNodeDown: Node Recovery
+    TwoNodesDown --> ClusterDown: All Nodes Fail
+    
+    ClusterDown --> Recovery: Manual Intervention
+    Recovery --> SingleNodeUp: First Node Started
+    SingleNodeUp --> TwoNodesUp: Second Node Joined
+    TwoNodesUp --> HealthyCluster: Third Node Joined
+    
+    HealthyCluster --> NetworkPartition: Network Split
+    NetworkPartition --> HealthyCluster: Network Restored
+    NetworkPartition --> ManualRecovery: Prolonged Partition
+    
+    ManualRecovery --> HealthyCluster: Cluster Rebuilt
+    
+    note right of HealthyCluster
+        3/3 Nodes Online
+        Quorum: Available
+        Status: Healthy
+    end note
+    
+    note right of SingleNodeDown
+        2/3 Nodes Online
+        Quorum: Available
+        Status: Degraded
+        Action: Alert Ops
+    end note
+    
+    note right of TwoNodesDown
+        1/3 Nodes Online
+        Quorum: LOST
+        Status: Critical
+        Action: Page On-call
+    end note
+    
+    note right of ClusterDown
+        0/3 Nodes Online
+        Quorum: LOST
+        Status: DOWN
+        Action: Emergency Response
+    end note
+```
+
+### Geographic Distribution
+
+```mermaid
+graph TB
+    subgraph NorthAmerica["North America Region"]
+        NALB["Load Balancer<br/>NA"]
+        subgraph NACluster["Cluster NA"]
+            NANode1["New York<br/>Node 1"]
+            NANode2["Chicago<br/>Node 2"]
+            NANode3["Dallas<br/>Node 3"]
+        end
+        NALB --> NANode1
+        NALB --> NANode2
+        NALB --> NANode3
+    end
+    
+    subgraph Europe["Europe Region"]
+        EULB["Load Balancer<br/>EU"]
+        subgraph EUCluster["Cluster EU"]
+            EUNode1["London<br/>Node 1"]
+            EUNode2["Frankfurt<br/>Node 2"]
+            EUNode3["Amsterdam<br/>Node 3"]
+        end
+        EULB --> EUNode1
+        EULB --> EUNode2
+        EULB --> EUNode3
+    end
+    
+    subgraph AsiaPacific["Asia Pacific Region"]
+        APLB["Load Balancer<br/>APAC"]
+        subgraph APCluster["Cluster APAC"]
+            APNode1["Tokyo<br/>Node 1"]
+            APNode2["Singapore<br/>Node 2"]
+            APNode3["Sydney<br/>Node 3"]
+        end
+        APLB --> APNode1
+        APLB --> APNode2
+        APLB --> APNode3
+    end
+    
+    GlobalDNS["Global DNS<br/>GeoDNS Routing"]
+    
+    NAClient["NA Clients"] --> GlobalDNS
+    EUClient["EU Clients"] --> GlobalDNS
+    APClient["APAC Clients"] --> GlobalDNS
+    
+    GlobalDNS -.->|Lowest Latency| NALB
+    GlobalDNS -.->|Lowest Latency| EULB
+    GlobalDNS -.->|Lowest Latency| APLB
+    
+    NANode1 <-.->|Federation| EUNode1
+    EUNode1 <-.->|Federation| APNode1
+    APNode1 <-.->|Federation| NANode1
+    
+    NANode1 <-->|Local Cluster| NANode2
+    NANode2 <-->|Local Cluster| NANode3
+    NANode3 <-->|Local Cluster| NANode1
+    
+    EUNode1 <-->|Local Cluster| EUNode2
+    EUNode2 <-->|Local Cluster| EUNode3
+    EUNode3 <-->|Local Cluster| EUNode1
+    
+    APNode1 <-->|Local Cluster| APNode2
+    APNode2 <-->|Local Cluster| APNode3
+    APNode3 <-->|Local Cluster| APNode1
+    
+    style GlobalDNS fill:#e1f5ff
+    style NANode1 fill:#c8e6c9
+    style EUNode1 fill:#fff9c4
+    style APNode1 fill:#ffccbc
+```
+
+---
+
+## Storage Architecture
+
+### Volume Storage Options
+
+```mermaid
+graph TB
+    subgraph OverlayFS["Overlay Storage (Default)"]
+        OverlayDriver["Overlay2 Driver"]
+        LowerLayer["Lower Layer<br/>(Image)"]
+        UpperLayer["Upper Layer<br/>(Container Changes)"]
+        MergedView["Merged View<br/>(Container Filesystem)"]
+        
+        OverlayDriver --> LowerLayer
+        OverlayDriver --> UpperLayer
+        LowerLayer -.->|Read-only| MergedView
+        UpperLayer -.->|Read-write| MergedView
+    end
+    
+    subgraph NamedVolume["Named Volume (Recommended)"]
+        VolumeDriver["Volume Driver"]
+        HostPath["Host Directory<br/>/var/lib/containers/storage/volumes"]
+        MountPoint["Mount Point<br/>/var/lib/rabbitmq"]
+        
+        VolumeDriver --> HostPath
+        HostPath --> MountPoint
+    end
+    
+    subgraph BindMount["Bind Mount"]
+        HostDir["Host Directory<br/>/opt/rabbitmq/data"]
+        ContainerMount["Container Path<br/>/var/lib/rabbitmq"]
+        
+        HostDir -.->|Direct Mount| ContainerMount
+    end
+    
+    Container["RabbitMQ Container"]
+    
+    MergedView -.->|OS & App Files| Container
+    MountPoint -->|Data| Container
+    ContainerMount -.->|Alternative Data| Container
+    
+    Performance["Performance Characteristics"]
+    
+    MergedView -.->|Slower<br/>Copy-on-Write| Performance
+    MountPoint -->|Fast<br/>Direct I/O| Performance
+    ContainerMount -->|Fastest<br/>No Abstraction| Performance
+    
+    style NamedVolume fill:#c8e6c9
+    style MountPoint fill:#4caf50
+    style Performance fill:#fff4e6
+```
+
+### Storage Backend Comparison
+
+```mermaid
+graph LR
+    subgraph Backends["Storage Backend Options"]
+        subgraph Overlay["Overlay2<br/>(Default)"]
+            OPro["✅ Default<br/>✅ Easy setup<br/>❌ Slower I/O<br/>❌ Copy-on-write overhead"]
+        end
+        
+        subgraph VFS["VFS"]
+            VPro["✅ Simple<br/>✅ No special kernel features<br/>❌ Very slow<br/>❌ No space efficiency"]
+        end
+        
+        subgraph Btrfs["Btrfs"]
+            BPro["✅ CoW snapshots<br/>✅ Compression<br/>❌ Less mature<br/>❌ Performance varies"]
+        end
+        
+        subgraph ZFS["ZFS"]
+            ZPro["✅ Excellent features<br/>✅ Snapshots<br/>❌ Not in kernel<br/>❌ License issues"]
+        end
+        
+        subgraph Volume["Volume Mount<br/>(Recommended)"]
+            VoPro["✅ Best performance<br/>✅ Direct I/O<br/>✅ Easy backups<br/>✅ Portable"]
+        end
+    end
+    
+    RabbitMQ["RabbitMQ<br/>High I/O Workload"]
+    
+    RabbitMQ -.->|Not Recommended| Overlay
+    RabbitMQ -.->|Not Recommended| VFS
+    RabbitMQ -.->|Acceptable| Btrfs
+    RabbitMQ -.->|Good| ZFS
+    RabbitMQ -->|Best Choice| Volume
+    
+    style Volume fill:#c8e6c9
+    style RabbitMQ fill:#e1f5ff
+```
+
+---
+
+## Complete End-to-End Architecture
+
+### Full Production Stack
+
+```mermaid
+graph TB
+    subgraph External["External Layer"]
+        Internet["Internet"]
+        VPN["VPN Access"]
+    end
+    
+    subgraph LoadBalancing["Load Balancing Layer"]
+        GlobalLB["Global Load Balancer<br/>DNS-based"]
+        HAProxy["HAProxy<br/>10.0.1.100"]
+        
+        GlobalLB --> HAProxy
+    end
+    
+    subgraph ApplicationLayer["Application Container Layer"]
+        subgraph Host1["Host 1 - 10.0.1.201"]
+            RMQ1["RabbitMQ Container 1<br/>rabbit@node1"]
+            Prometheus1["Prometheus"]
+            RMQ1Volume["Data Volume 1<br/>100GB SSD"]
+            
+            RMQ1 --> RMQ1Volume
+        end
+        
+        subgraph Host2["Host 2 - 10.0.1.202"]
+            RMQ2["RabbitMQ Container 2<br/>rabbit@node2"]
+            Grafana["Grafana<br/>Dashboards"]
+            RMQ2Volume["Data Volume 2<br/>100GB SSD"]
+            
+            RMQ2 --> RMQ2Volume
+        end
+        
+        subgraph Host3["Host 3 - 10.0.1.203"]
+            RMQ3["RabbitMQ Container 3<br/>rabbit@node3"]
+            AlertManager["AlertManager"]
+            RMQ3Volume["Data Volume 3<br/>100GB SSD"]
+            
+            RMQ3 --> RMQ3Volume
+        end
+    end
+    
+    subgraph DataLayer["Data Persistence Layer"]
+        Backup["Backup Service<br/>Daily Automated"]
+        S3["S3 Storage<br/>Long-term Archive"]
+        NFS["NFS Share<br/>Network Backup"]
+        
+        RMQ1Volume --> Backup
+        RMQ2Volume --> Backup
+        RMQ3Volume --> Backup
+        
+        Backup --> NFS
+        NFS --> S3
+    end
+    
+    subgraph Monitoring["Monitoring & Observability"]
+        Prometheus1 -->|Scrape| RMQ1
+        Prometheus1 -->|Scrape| RMQ2
+        Prometheus1 -->|Scrape| RMQ3
+        
+        Grafana -->|Query| Prometheus1
+        
+        AlertManager -->|Notify| Email["Email"]
+        AlertManager -->|Notify| Slack["Slack"]
+        AlertManager -->|Notify| PagerDuty["PagerDuty"]
+    end
+    
+    subgraph Clients["Client Applications"]
+        Lenel["Lenel OnGuard<br/>OpenAccess Clients"]
+        Custom["Custom Applications"]
+        ThirdParty["Third-party Integrations"]
+    end
+    
+    Internet --> GlobalLB
+    VPN --> HAProxy
+    
+    HAProxy -->|Load Balance| RMQ1
+    HAProxy -->|Load Balance| RMQ2
+    HAProxy -->|Load Balance| RMQ3
+    
+    Lenel --> HAProxy
+    Custom --> HAProxy
+    ThirdParty --> HAProxy
+    
+    RMQ1 <-->|Cluster<br/>Port 25672| RMQ2
+    RMQ2 <-->|Cluster<br/>Port 25672| RMQ3
+    RMQ3 <-->|Cluster<br/>Port 25672| RMQ1
+    
+    Admins["Administrators"] --> Grafana
+    Admins --> VPN
+    
+    Prometheus1 -->|Alert Rules| AlertManager
+    
+    style RMQ1 fill:#e1f5ff
+    style RMQ2 fill:#e1f5ff
+    style RMQ3 fill:#e1f5ff
+    style HAProxy fill:#f3e5f5
+    style Grafana fill:#fff4e6
+    style Prometheus1 fill:#ffe5e5
+    style S3 fill:#c8e6c9
+```
+
+---
+
+## Tags
+#rabbitmq #podman #containers #containerization #architecture #diagrams #mermaid #load-balancing #clustering #monitoring #backup #migration #high-availability #devops #infrastructure
+```
+
+These Mermaid diagrams cover all major architectural aspects of containerizing RabbitMQ with Podman. They'll render beautifully in Obsidian and provide visual references for:
+
+1. **Deployment architectures** (single instance and cluster)
+2. **Technology comparisons** (VMs vs Containers, Podman vs Docker)
+3. **Network configurations** (bridge, host, custom networks)
+4. **Data flows** (publishing, consuming, clustering)
+5. **Operational processes** (backup, recovery, migration)
+6. **Monitoring setups** (metrics collection, alerting)
+7. **High availability** (multi-datacenter, geographic distribution)
+8. **Storage options** (volumes, bind mounts, backends)
+
+Each diagram is standalone and can be copied individually or kept together as a comprehensive visual reference guide!
