@@ -59,3 +59,118 @@ Event synchronization: Ensure real-time events (door opens, alarms) are properly
 State management: Some operations may require sticky sessions
 
 What's your current bottleneck - is it the message queuing, the OpenAccess API processing, or database queries? That would help determine the best approach.
+-----------------------------------------------------------------------------------------
+
+Claude load balancing links
+I'll search for comprehensive documentation on all the topics we covered. Let me gather links for Lenel-specific resources, load balancing tools, RabbitMQ clustering, and related technologies.Perfect! Now let me compile all of these comprehensive documentation links for you, organized by topic:
+
+## Comprehensive Documentation Links
+
+### **Lenel OnGuard & OpenAccess Documentation**
+
+**Official Lenel Resources:**
+- LenelS2 OpenAccess Alliance Program (OAAP): https://www.lenels2.com/en/security-solutions/third-party-integration/oaap
+- LenelS2 Knowledgebase - OpenAccess: https://kb.lenels2.com/home/openaccess
+- How to Access OnGuard Documentation: https://kb.lenels2.com/home/how-to-access-onguard-documentation
+- OAAP Certification Process Guide: https://cdn.lenel.com/oaap/OAAPCertificationProcess.pdf
+- Honeywell MyBuildings Document Center: https://buildings.honeywell.com/us/en (Sign in → Support → Document Center → LenelS2)
+
+**Third-Party Integration Guides:**
+- GitHub - Lenel SDK: https://github.com/tractionguest/lenel-sdk
+- SureView OnGuard OpenAccess Integration: https://help.sureviewops.com/hc/en-us/articles/4409674960017-Lenel-OnGuard-OpenAccess
+- Savance Workplace Integration Guide: https://www.savanceworkplace.com/pdf/ACI-Guides/Savance-Workplace-LenelS2-OnGuard-Integration-Setup-Guide.pdf
+- Telaeris XPressEntry OnGuard Documentation: https://telaeris.com/documentation/xpressentry/lenel-onguard
+
+---
+
+### **RabbitMQ Clustering Documentation**
+
+**Official RabbitMQ Documentation:**
+- Clustering Guide: https://www.rabbitmq.com/docs/clustering
+- Cluster Formation and Peer Discovery: https://www.rabbitmq.com/docs/cluster-formation
+- Distributed RabbitMQ: https://www.rabbitmq.com/docs/distributed
+- Clustering and Network Partitions: https://www.rabbitmq.com/docs/partitions
+- Clustering and Khepri: https://www.rabbitmq.com/docs/metadata-store/clustering
+
+**Implementation Guides:**
+- RabbitMQ Helper - Clustering (Delinea): https://docs.delinea.com/online-help/rabbitmq-helper/clustering/index.htm
+- Svix RabbitMQ Cluster Setup Guide: https://www.svix.com/resources/guides/rabbitmq-cluster-setup-guide/
+- Building High Availability RabbitMQ Cluster (Medium): https://kisztof.medium.com/building-a-high-availability-rabbitmq-cluster-27d0eb67938
+- HowToForge - RabbitMQ Cluster on CentOS 7: https://www.howtoforge.com/how-to-set-up-rabbitmq-cluster-on-centos-7/
+- GitHub - 3 Node Cluster Configuration: https://gist.github.com/pobsuwan/22aa4a9e0a217d22e12800a432933881
+
+---
+
+### **HAProxy Load Balancing Documentation**
+
+**Official HAProxy Resources:**
+- HAProxy Homepage: https://www.haproxy.org/
+- HAProxy 3.2 Starter Guide: http://docs.haproxy.org/3.2/intro.html
+
+**Configuration Guides:**
+- Red Hat - HAProxy Configuration (RHEL 7): https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/load_balancer_administration/ch-haproxy-setup-vsa
+- Red Hat - Install and Configure HAProxy: https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/load_balancer_administration/install_haproxy_example1
+- DigitalOcean - Introduction to HAProxy and Load Balancing: https://www.digitalocean.com/community/tutorials/an-introduction-to-haproxy-and-load-balancing-concepts
+- HAProxy.com - Configuration Basics Tutorial: https://www.haproxy.com/blog/haproxy-configuration-basics-load-balance-your-servers
+- Linode - How to Use HAProxy for Load Balancing: https://www.linode.com/docs/guides/how-to-use-haproxy-for-load-balancing/
+- Oracle Linux - Setting Up Load Balancing by Using HAProxy: https://docs.oracle.com/en/operating-systems/oracle-linux/9/balancing/balancing-SettingUpLoadBalancingbyUsingHAProxy.html
+- PhoenixNAP - How to Configure and Use HAProxy: https://phoenixnap.com/kb/haproxy-load-balancer
+- HashiCorp Consul - Load Balance with HAProxy: https://developer.hashicorp.com/consul/docs/discover/load-balancer/ha
+
+---
+
+### **Nginx Load Balancing Documentation**
+
+**Official Nginx Documentation:**
+- HTTP Load Balancing (Nginx Docs): https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/
+- Using Nginx as HTTP Load Balancer: https://nginx.org/en/docs/http/load_balancing.html
+- Load Balancer Overview: https://docs.nginx.com/nginx/admin-guide/load-balancer/
+- TCP and UDP Load Balancing: https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/
+- Load Balancing Node.js with Nginx: https://docs.nginx.com/nginx/deployment-guides/load-balance-third-party/node-js/
+- Simple Load Balancing Examples: https://www.nginx.com/resources/wiki/start/topics/examples/loadbalanceexample/
+
+**Implementation Guides:**
+- Oracle Linux - Setting Up Load Balancing by Using NGINX: https://docs.oracle.com/en/operating-systems/oracle-linux/8/balancing/balancing-SettingUpLoadBalancingbyUsingNGINX.html
+- TheServerSide - Nginx Load Balancer Example: https://www.theserverside.com/blog/Coffee-Talk-Java-News-Stories-and-Opinions/How-to-setup-an-Nginx-load-balancer-example
+- Vultr - How to Set Up Load Balancing with Nginx: https://docs.vultr.com/how-to-setup-load-balancing-using-nginx
+- UpCloud - How To Configure Load Balancing Using Nginx: https://upcloud.com/resources/tutorials/configure-load-balancing-nginx/
+
+---
+
+### **Windows Failover Clustering Documentation**
+
+**Official Microsoft Documentation:**
+- Failover Clustering Overview: https://learn.microsoft.com/en-us/windows-server/failover-clustering/failover-clustering-overview
+- Create a Failover Cluster: https://learn.microsoft.com/en-us/windows-server/failover-clustering/create-failover-cluster
+- Windows Server Failover Clustering (WSFC) - TechTarget: https://www.techtarget.com/searchwindowsserver/definition/Windows-Server-failover-clustering
+
+**Implementation Guides:**
+- Google Cloud - Running WSFC on Compute Engine: https://docs.cloud.google.com/compute/docs/tutorials/running-windows-server-failover-clustering
+- VMware - Setup for WSFC on vSphere: https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/7-0/setup-for-windows-server-failover-clustering.html
+- Veeam - How to Create a Failover Cluster in Windows Server 2019: https://www.veeam.com/blog/windows-server-2019-failover-cluster.html
+- PaperCut - MSFCM on Windows Server 2012/2016: https://www.papercut.com/help/manuals/ng-mf/common/cluster-server-2012-2016/
+- NXLog - Windows Server Failover Clustering: https://docs.nxlog.co/integrate/windows-server-failover-clustering.html
+- Syteca - Deploying a Failover Cluster Using MSFCM: https://docs.syteca.com/view/stage-2-deploying-a-failover-cluster-using-the-mic
+- XIA Configuration - Windows Failover Cluster Documentation Tool: https://www.centrel-solutions.com/xiaconfiguration/capabilities.aspx?capability=windows-failover-cluster-configuration-documentation-tool
+
+---
+
+### **SQL Server Always On Availability Groups**
+
+**Official Microsoft Documentation:**
+- What is an Always On Availability Group?: https://learn.microsoft.com/en-us/sql/database-engine/availability-groups/windows/overview-of-always-on-availability-groups-sql-server?view=sql-server-ver17
+- Getting Started with Availability Groups: https://learn.microsoft.com/en-us/sql/database-engine/availability-groups/windows/getting-started-with-always-on-availability-groups-sql-server?view=sql-server-ver17
+- Prerequisites, Restrictions, and Recommendations: https://learn.microsoft.com/en-us/sql/database-engine/availability-groups/windows/prereqs-restrictions-recommendations-always-on-availability?view=sql-server-ver17
+
+**Implementation Guides:**
+- Google Cloud - Configure SQL Server Always On with ILB: https://docs.cloud.google.com/compute/docs/instances/sql-server/configure-availability
+- SQLServerCentral - Basic Always On AG in SQL Server Standard: https://www.sqlservercentral.com/articles/setting-up-basic-always-on-availability-groups-in-sql-server-standard
+- Medium - How to Implement Always On AG in SQL Server 2019: https://rafaelrampineli.medium.com/how-to-implement-always-on-availability-groups-in-sql-server-2019-on-windows-11f6fb8aad5f
+- Brent Ozar - AlwaysOn Availability Groups Tutorials: https://www.brentozar.com/sql/sql-server-alwayson-availability-groups/
+- AWS Prescriptive Guidance - Always On Availability Groups: https://docs.aws.amazon.com/prescriptive-guidance/latest/migration-sql-server/ec2-always-on.html
+- ClusterControl - SQL Server Always On AG: https://docs.severalnines.com/clustercontrol/2.3.2/getting-started/tutorials/day-1-operations/your-first-cluster/sql-server/always-on-availability-group/
+- Commvault - Always On Availability Groups for SQL Server: https://documentation.commvault.com/saas/always_on_availability_groups_for_sql_server.html
+
+---
+
+These links cover everything from basic concepts to advanced implementation details for all the topics we discussed. The documentation ranges from official vendor resources to community guides and real-world implementation examples. This should give you comprehensive coverage for implementing your load-balanced, highly available Lenel infrastructure!
